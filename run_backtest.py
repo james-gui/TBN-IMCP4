@@ -138,7 +138,7 @@ def main():
     cmd = ["prosperity4btx", ALGORITHM, day, "--out", OUTPUT_FILE] + extra_flags
     print(f"Running: {' '.join(cmd)}")
 
-    result = subprocess.run(cmd)
+    result = subprocess.run(cmd, shell=(sys.platform == "win32"))
     if result.returncode != 0:
         print("Backtest failed — check the output above.")
         sys.exit(result.returncode)

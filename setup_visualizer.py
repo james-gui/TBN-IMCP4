@@ -26,7 +26,8 @@ def check(cmd: str, install_hint: str) -> None:
 
 
 def run(args: list[str], cwd: str) -> None:
-    result = subprocess.run(args, cwd=cwd)
+    # shell=True required on Windows for npm-installed commands (pnpm.cmd etc.)
+    result = subprocess.run(args, cwd=cwd, shell=(sys.platform == "win32"))
     if result.returncode != 0:
         print(f"Command failed: {' '.join(args)}")
         sys.exit(result.returncode)
