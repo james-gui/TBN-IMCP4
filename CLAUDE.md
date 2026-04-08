@@ -3,11 +3,30 @@
 ## Project Overview
 IMC Prosperity 4 trading algorithm submission. The algorithm runs inside the `prosperity4btx` backtester simulator and is evaluated against historical market data across multiple rounds/days.
 
+## File Naming Convention
+
+Every strategy has two paired files:
+
+| Suffix | Purpose | Has Logger | Use with |
+|---|---|---|---|
+| `_viz.py` | Backtesting + visualizer | YES | `run_backtest.py --algo` |
+| `_submit.py` | IMC platform submission | NO | Upload to IMC directly |
+
+**Rule**: whenever a `_viz.py` file is created or modified, the corresponding `_submit.py` must also be created/updated to match — same logic, no Logger class, no `logger.flush()`, bare `print()` instead of `logger.print()`.
+
+Current strategy pairs:
+- `message_viz.py` / `message_submit.py` — market making (EMERALDS) + mean reversion (TOMATOES)
+- `attempt2_viz.py` / `attempt2_submit.py` — momentum market making with EMA skew (both products)
+- `jamestutorialr_viz.py` / `jamestutorialr_submit.py` — same as message, James's tutorial version
+
 ## File Structure
-- `message.py` — the trading algorithm (the `Trader` class). This is the only file submitted to the competition.
-- `datamodel.py` — provided by IMC; defines all types used by the backtester. Do not modify.
-- `run_backtest.py` — local automation script: runs the backtest and opens results in the visualizer.
-- `backtests/` — auto-generated logs when running without `--out`.
+- `viz/` — strategy files with Logger (for backtesting/visualizer). Also contains a copy of `datamodel.py` so prosperity4btx can find it when running files from this folder.
+- `submit/` — strategy files without Logger (upload these to IMC). No datamodel needed — IMC provides it at runtime.
+- `datamodel.py` — root copy, source of truth. If IMC updates it, copy it to `viz/datamodel.py` too.
+- `run_backtest.py` — runs backtest + opens local visualizer automatically
+- `setup_visualizer.py` — one-time build script for the local visualizer
+- `visualizer/` — git submodule: jmerle/imc-prosperity-3-visualizer
+- `backtests/` — auto-generated logs when running without `--out`
 
 ## Setup (first time after cloning)
 ```bash
@@ -19,30 +38,30 @@ python setup_visualizer.py   # requires Node 18+ and pnpm; builds visualizer/dis
 
 ### With auto-open visualizer (preferred)
 ```bash
-python run_backtest.py 0
+python run_backtest.py 0                               # runs viz/message_viz.py (default)
+python run_backtest.py 0 --algo viz/attempt2_viz.py   # runs a specific strategy
 python run_backtest.py 0 --merge-pnl
 ```
-Serves everything locally on port 8765 — no internet needed. Opens:
-`http://localhost:8765/imc-prosperity-3-visualizer/?open=http://localhost:8765/output.log`
+Serves everything locally on port 8765 — no internet needed.
 
 ### Manually
 ```bash
-prosperity4btx message.py 0 --out output.log
+prosperity4btx viz/message_viz.py 0 --out output.log
 ```
 
 Day argument: `0` is round 0 (tutorial). Higher numbers correspond to later competition rounds.
 
-## Algorithm Structure (`message.py`)
+## Logger Rules (viz files only)
 
-### Logger (do not change)
-The `Logger` class and `logger = Logger()` global at the top of `message.py` are required boilerplate for the visualizer. Output must use `logger.print()` not `print()`. The `logger.flush(state, result, conversions, traderData)` call at the end of `run()` is mandatory.
-
-The Logger class is NOT provided by the IMC platform at runtime — it must be present in the submitted file. The platform's starter template includes it as boilerplate; never strip it out.
+- **Do not modify** the `Logger` class — required verbatim for the visualizer
+- **Always call** `logger.flush(state, result, conversions, traderData)` as the last line before `return`
+- **Use `logger.print()`** instead of `print()` for debug output — bare `print()` breaks the log format
+- The Logger class must be present in every `_viz.py` file
 
 ### IMC template vs. this implementation
-The IMC platform stub uses `trader_data = ""` (plain string, unused). This repo's implementation uses `trader_data` as a `dict` that is JSON-serialized into `traderData: str` before being passed to `logger.flush()` and returned. When adding new strategies, persist state by adding keys to the `trader_data` dict — not by using a bare string.
+The IMC platform stub uses `trader_data = ""` (plain string, unused). This repo uses `trader_data` as a `dict` serialized to JSON. Persist state by adding keys to the dict, not with a bare string.
 
-### Trader.run() contract
+## Trader.run() contract
 ```python
 def run(self, state: TradingState) -> tuple[dict[Symbol, list[Order]], int, str]:
     ...
@@ -52,49 +71,24 @@ def run(self, state: TradingState) -> tuple[dict[Symbol, list[Order]], int, str]
 - `conversions`: int, number of conversions requested (0 if unused)
 - `traderData`: arbitrary string persisted across ticks (use JSON)
 
-### Position limits
-`POSITION_LIMIT = 80` per product. Orders that would exceed this are rejected by the exchange. Always check `state.position.get(product, 0)` before placing orders.
-
-### Persisting state across ticks
-Load at the top of `run()`:
-```python
-trader_data = json.loads(state.traderData) if state.traderData else {}
-```
-Serialize at the bottom before flush:
-```python
-traderData = json.dumps(trader_data)
-```
-
-## Current Strategies
-
-### EMERALDS — Market Making
-- Stable asset, tight spread around ~10,000
-- Places buy at `best_bid + 1`, sell at `best_ask - 1`
-- Order size: 15 units per side, capped by position limit
-
-### TOMATOES — Mean Reversion
-- Volatile asset, mean ~5,000
-- Tracks last 100 mid-prices; uses 20-period rolling mean
-- Buys when `best_ask < mean - 10`, sells when `best_bid > mean + 10`
-- Falls back to market making at `mean ± 5` when no signal
-- Order size: 10 units for signals, 5 units for market making
+## Position Limits
+`POSITION_LIMIT = 80` per product. Always check `state.position.get(product, 0)` before placing orders.
 
 ## Key Types (from `datamodel.py`)
-- `TradingState`: snapshot of the market for one tick. Key fields: `timestamp`, `order_depths`, `position`, `own_trades`, `market_trades`, `observations`, `traderData`
+- `TradingState`: `timestamp`, `order_depths`, `position`, `own_trades`, `market_trades`, `observations`, `traderData`
 - `OrderDepth`: `buy_orders: Dict[int, int]` and `sell_orders: Dict[int, int]` (price → volume)
 - `Order(symbol, price, quantity)`: positive quantity = buy, negative = sell
-- `Observation`: `plainValueObservations` and `conversionObservations` (for conversion arbitrage)
 
-## Adding a New Product
-1. Add an `elif product == "NEW_PRODUCT":` branch inside the `for product in state.order_depths` loop in `Trader.run()`
-2. Follow the same pattern: get `order_depth`, compute signals, append to `orders`, respect `POSITION_LIMIT`
-3. If you need per-product state, add a key to `trader_data` dict
+## Adding a New Strategy
+1. Create `viz/{name}_viz.py` with Logger boilerplate + trading logic
+2. Create matching `submit/{name}_submit.py` — identical logic, Logger class removed, `logger.flush()` removed, `logger.print()` → `print()`
+3. Test with `python run_backtest.py 0 --algo viz/{name}_viz.py`
+4. Submit `submit/{name}_submit.py` to IMC
 
 ## Visualizer Notes
-- `visualizer/` is a git submodule (`jmerle/imc-prosperity-3-visualizer`). Built output lives at `visualizer/dist/`. Never commit `visualizer/dist/` — it is gitignored inside the submodule.
-- `setup_visualizer.py` is the one-time build script. Re-run it if the submodule is updated (`git submodule update --remote visualizer`).
-- `run_backtest.py` runs a single Python HTTP server on port 8765 routing:
+- `visualizer/` is a git submodule (`jmerle/imc-prosperity-3-visualizer`). Never commit `visualizer/dist/`.
+- `run_backtest.py` runs a single Python HTTP server on port 8765:
   - `/imc-prosperity-3-visualizer/` → `visualizer/dist/`
   - `/output.log` → project root `output.log`
-- The server must stay running while the visualizer is open in the browser.
-- Use `logger.print("msg")` anywhere in `run()` to emit debug logs visible in the visualizer's Lambda Logs panel.
+- Server must stay running while the visualizer is open in the browser
+- Use `logger.print("msg")` in `_viz.py` files for debug logs visible in the Lambda Logs panel

@@ -23,7 +23,7 @@ import time
 import webbrowser
 
 # ── Config ────────────────────────────────────────────────────────────────────
-ALGORITHM    = "message.py"
+DEFAULT_ALGORITHM = "viz/message_viz.py"
 OUTPUT_FILE  = "output.log"
 SERVER_PORT  = 8765
 
@@ -128,14 +128,21 @@ def main():
 
     args = sys.argv[1:]
     day = "0"
+    algo = DEFAULT_ALGORITHM
     extra_flags = []
-    for arg in args:
-        if arg.startswith("--"):
-            extra_flags.append(arg)
+    i = 0
+    while i < len(args):
+        if args[i] == "--algo" and i + 1 < len(args):
+            algo = args[i + 1]
+            i += 2
+        elif args[i].startswith("--"):
+            extra_flags.append(args[i])
+            i += 1
         else:
-            day = arg
+            day = args[i]
+            i += 1
 
-    cmd = ["prosperity4btx", ALGORITHM, day, "--out", OUTPUT_FILE] + extra_flags
+    cmd = ["prosperity4btx", algo, day, "--out", OUTPUT_FILE] + extra_flags
     print(f"Running: {' '.join(cmd)}")
 
     result = subprocess.run(cmd, shell=(sys.platform == "win32"))
