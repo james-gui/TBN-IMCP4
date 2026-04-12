@@ -3,12 +3,17 @@
 Run backtest and automatically open results in the local visualizer.
 
 Usage:
-    python run_backtest.py [day] [--merge-pnl]
+    python run_backtest.py [day] [--algo PATH] [--data DIR] [--merge-pnl]
 
 Examples:
     python run_backtest.py 0
     python run_backtest.py 0 --merge-pnl
+    python run_backtest.py 0 --algo viz/attempt2_viz.py
+    python run_backtest.py 0 --data data/          # explicit data dir
     python run_backtest.py          # defaults to day 0
+
+If a data/ directory exists at the project root it is used automatically
+(equivalent to passing --data data/).
 
 First-time setup (build the visualizer once):
     python setup_visualizer.py
@@ -129,11 +134,15 @@ def main():
     args = sys.argv[1:]
     day = "0"
     algo = DEFAULT_ALGORITHM
+    data_dir = None
     extra_flags = []
     i = 0
     while i < len(args):
         if args[i] == "--algo" and i + 1 < len(args):
             algo = args[i + 1]
+            i += 2
+        elif args[i] == "--data" and i + 1 < len(args):
+            data_dir = args[i + 1]
             i += 2
         elif args[i].startswith("--"):
             extra_flags.append(args[i])
@@ -142,7 +151,14 @@ def main():
             day = args[i]
             i += 1
 
-    cmd = ["prosperity4btx", algo, day, "--out", OUTPUT_FILE] + extra_flags
+    # Auto-use local data/ directory if present and --data wasn't given
+    if data_dir is None:
+        default_data = os.path.join(BASE_DIR, "data")
+        if os.path.isdir(default_data):
+            data_dir = default_data
+
+    data_flags = ["--data", data_dir] if data_dir else []
+    cmd = ["prosperity4btx", algo, day, "--out", OUTPUT_FILE] + data_flags + extra_flags
     print(f"Running: {' '.join(cmd)}")
 
     result = subprocess.run(cmd, shell=(sys.platform == "win32"))

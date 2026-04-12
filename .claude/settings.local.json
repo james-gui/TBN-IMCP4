@@ -1,0 +1,7 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(prosperity4btx viz/flatmm_viz.py 0 --no-out --data data/)"
+    ]
+  }
+}

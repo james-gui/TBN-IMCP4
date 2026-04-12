@@ -91,6 +91,16 @@ logger = Logger()
 
 POSITION_LIMIT = 80
 
+# ── Per-product parameters ────────────────────────────────────────────────────
+# fair_value:  fixed true price (None = use mid-price dynamically)
+# order_size:  base units to quote per side per tick (maker leg)
+# skew_factor: inventory skew aggressiveness (0.0 = off, 1.0 = full linear skew)
+# take_edge:   min edge vs fair value required to take a bot order (taker leg)
+PARAMS = {
+    "EMERALDS": {"fair_value": 10000, "order_size": 20, "skew_factor": 0.5, "take_edge": 1, "min_spread": 2},
+    "TOMATOES":  {"fair_value": None,  "order_size": 20, "skew_factor": 0.5, "take_edge": 1, "min_spread": 4},
+}
+
 
 class Trader:
     def run(self, state: TradingState) -> tuple[dict[Symbol, list[Order]], int, str]:
@@ -109,26 +119,60 @@ class Trader:
             best_ask = min(order_depth.sell_orders.keys())
             spread = best_ask - best_bid
 
-            # Only quote if there's room to undercut (spread must be > 1 tick)
-            if spread > 1:
-                our_bid = best_bid + 1   # one tick better than best public bid
-                our_ask = best_ask - 1   # one tick better than best public ask
+            cfg = PARAMS.get(product, {"fair_value": None, "order_size": 20, "skew_factor": 0.0, "take_edge": 1})
+            fv = cfg["fair_value"] if cfg["fair_value"] is not None else (best_bid + best_ask) / 2
+            take_edge = cfg["take_edge"]
 
-                max_buy = POSITION_LIMIT - pos
-                max_sell = POSITION_LIMIT + pos
+            remaining_buy  = POSITION_LIMIT - pos
+            remaining_sell = POSITION_LIMIT + pos
 
-                if max_buy > 0:
-                    orders.append(Order(product, our_bid, min(20, max_buy)))
-                if max_sell > 0:
-                    orders.append(Order(product, our_ask, -min(20, max_sell)))
+            # ── 1. TAKER LEG: sweep any bot orders better than fair value ─────
+            # Buy any ask priced strictly below fair value (free edge)
+            for ask_px in sorted(order_depth.sell_orders.keys()):
+                if remaining_buy <= 0:
+                    break
+                if ask_px <= fv - take_edge:
+                    qty = min(-order_depth.sell_orders[ask_px], remaining_buy)
+                    orders.append(Order(product, ask_px, qty))
+                    remaining_buy -= qty
+                    logger.print(f"[{product}] TAKE buy {qty}@{ask_px} fv={fv:.1f}")
+                else:
+                    break
+
+            # Sell any bid priced strictly above fair value (free edge)
+            for bid_px in sorted(order_depth.buy_orders.keys(), reverse=True):
+                if remaining_sell <= 0:
+                    break
+                if bid_px >= fv + take_edge:
+                    qty = min(order_depth.buy_orders[bid_px], remaining_sell)
+                    orders.append(Order(product, bid_px, -qty))
+                    remaining_sell -= qty
+                    logger.print(f"[{product}] TAKE sell {qty}@{bid_px} fv={fv:.1f}")
+                else:
+                    break
+
+            # ── 2. MAKER LEG: post passive quotes inside the spread ───────────
+            min_spread = cfg.get("min_spread", 2)
+            if spread > min_spread:
+                our_bid = best_bid + 1
+                our_ask = best_ask - 1
+
+                base_size = cfg["order_size"]
+                skew = cfg["skew_factor"]
+                skew_ratio = pos / POSITION_LIMIT  # -1.0 to +1.0
+                bid_size = max(1, round(base_size * (1 - skew * skew_ratio)))
+                ask_size = max(1, round(base_size * (1 + skew * skew_ratio)))
+
+                if remaining_buy > 0:
+                    orders.append(Order(product, our_bid, min(bid_size, remaining_buy)))
+                if remaining_sell > 0:
+                    orders.append(Order(product, our_ask, -min(ask_size, remaining_sell)))
 
                 logger.print(
-                    f"[{product}] spread={spread} best={best_bid}/{best_ask} "
-                    f"quoting={our_bid}/{our_ask} pos={pos}"
+                    f"[{product}] MAKE {our_bid}/{our_ask} sz={bid_size}/{ask_size} pos={pos}"
                 )
             else:
-                # Spread is 1 tick — no room to undercut without crossing
-                logger.print(f"[{product}] spread={spread} too tight, skipping")
+                logger.print(f"[{product}] spread={spread} <= min_spread={min_spread}, skipping maker")
 
             result[product] = orders
 

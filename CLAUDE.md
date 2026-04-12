@@ -12,7 +12,7 @@ Every strategy has two paired files:
 | `_viz.py` | Backtesting + visualizer | YES | `run_backtest.py --algo` |
 | `_submit.py` | IMC platform submission | NO | Upload to IMC directly |
 
-**Rule**: whenever a `_viz.py` file is created or modified, the corresponding `_submit.py` must also be created/updated to match — same logic, no Logger class, no `logger.flush()`, bare `print()` instead of `logger.print()`.
+**Rule**: whenever a `_viz.py` file is created or modified, the corresponding `_submit.py` must also be created/updated to match — same logic, same Logger class included (IMC requires it), same `logger.flush()` call.
 
 Current strategy pairs:
 - `message_viz.py` / `message_submit.py` — market making (EMERALDS) + mean reversion (TOMATOES)
@@ -21,7 +21,7 @@ Current strategy pairs:
 
 ## File Structure
 - `viz/` — strategy files with Logger (for backtesting/visualizer). Also contains a copy of `datamodel.py` so prosperity4btx can find it when running files from this folder.
-- `submit/` — strategy files without Logger (upload these to IMC). No datamodel needed — IMC provides it at runtime.
+- `submit/` — strategy files **with Logger** (upload these to IMC). Logger is required by IMC. No datamodel.py needed — IMC provides it at runtime.
 - `datamodel.py` — root copy, source of truth. If IMC updates it, copy it to `viz/datamodel.py` too.
 - `run_backtest.py` — runs backtest + opens local visualizer automatically
 - `setup_visualizer.py` — one-time build script for the local visualizer
@@ -41,8 +41,11 @@ python setup_visualizer.py   # requires Node 18+ and pnpm; builds visualizer/dis
 python run_backtest.py 0                               # runs viz/message_viz.py (default)
 python run_backtest.py 0 --algo viz/attempt2_viz.py   # runs a specific strategy
 python run_backtest.py 0 --merge-pnl
+python run_backtest.py 0 --data data/                 # explicit custom data directory
 ```
 Serves everything locally on port 8765 — no internet needed.
+
+**Custom data:** If a `data/` directory exists at the project root, it is used automatically (no flag needed). Place CSV files in `data/round<N>/` following the naming pattern `prices_round_<N>_day_<D>.csv` and `trades_round_<N>_day_<D>.csv`.
 
 ### Manually
 ```bash
