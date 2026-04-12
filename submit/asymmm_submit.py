@@ -78,15 +78,47 @@ POSITION_LIMIT = 80
 EOD_THRESHOLD = 990_000
 
 PARAMS = {
-    "EMERALDS": {"fair_value": 10000, "order_size": 20, "skew_factor": 0.5, "take_edge": 1, "min_spread": 2},
-    "TOMATOES":  {"fair_value": None,  "order_size": 20, "skew_factor": 0.5, "take_edge": 1, "min_spread": 4},
+    "EMERALDS": {
+        "fair_value":      10000,
+        "order_size":      20,
+        "skew_factor":     0.5,
+        "price_skew":      0.0,
+        "take_edge":       1,
+        "min_spread":      2,
+        "ema_alpha":       None,
+        "inventory_pause": 70,
+    },
+    "TOMATOES": {
+        "fair_value":      None,
+        "order_size":      20,
+        "skew_factor":     1.0,
+        "price_skew":      2.0,
+        "take_edge":       1,
+        "min_spread":      4,
+        "ema_alpha":       0.15,
+        "inventory_pause": 55,
+    },
 }
+
+
+def volume_weighted_mid(order_depth: OrderDepth) -> float:
+    best_bid = max(order_depth.buy_orders.keys())
+    best_ask = min(order_depth.sell_orders.keys())
+    bid_vol  = order_depth.buy_orders[best_bid]
+    ask_vol  = abs(order_depth.sell_orders[best_ask])
+    return (best_bid * ask_vol + best_ask * bid_vol) / (bid_vol + ask_vol)
 
 
 class Trader:
     def run(self, state: TradingState) -> tuple[dict[Symbol, list[Order]], int, str]:
         result: Dict[str, List[Order]] = {}
         tick_in_day = state.timestamp % 1_000_000
+
+        try:
+            trader_state = json.loads(state.traderData) if state.traderData else {}
+        except Exception:
+            trader_state = {}
+        ema_state: Dict[str, float] = trader_state.get("ema", {})
 
         for product in state.order_depths:
             order_depth = state.order_depths[product]
@@ -105,15 +137,27 @@ class Trader:
                     orders.append(Order(product, best_bid, -pos))
                 elif pos < 0:
                     orders.append(Order(product, best_ask, -pos))
-                logger.print(f"[{product}] EOD flatten pos={pos}")
                 result[product] = orders
                 continue
 
             spread = best_ask - best_bid
-            cfg = PARAMS.get(product, {"fair_value": None, "order_size": 20, "skew_factor": 0.0, "take_edge": 1, "min_spread": 2})
-            fv = cfg["fair_value"] if cfg["fair_value"] is not None else (best_bid + best_ask) / 2
-            take_edge = cfg["take_edge"]
+            cfg = PARAMS.get(product, {
+                "fair_value": None, "order_size": 20, "skew_factor": 0.0,
+                "price_skew": 0.0, "take_edge": 1, "min_spread": 2,
+                "ema_alpha": None, "inventory_pause": 70,
+            })
 
+            if cfg["fair_value"] is not None:
+                fv = cfg["fair_value"]
+            else:
+                vwm = volume_weighted_mid(order_depth)
+                alpha = cfg["ema_alpha"]
+                if product not in ema_state:
+                    ema_state[product] = vwm
+                ema_state[product] = alpha * vwm + (1 - alpha) * ema_state[product]
+                fv = ema_state[product]
+
+            take_edge      = cfg["take_edge"]
             remaining_buy  = POSITION_LIMIT - pos
             remaining_sell = POSITION_LIMIT + pos
 
@@ -124,7 +168,6 @@ class Trader:
                     qty = min(-order_depth.sell_orders[ask_px], remaining_buy)
                     orders.append(Order(product, ask_px, qty))
                     remaining_buy -= qty
-                    logger.print(f"[{product}] TAKE buy {qty}@{ask_px} fv={fv:.1f}")
                 else:
                     break
 
@@ -135,31 +178,37 @@ class Trader:
                     qty = min(order_depth.buy_orders[bid_px], remaining_sell)
                     orders.append(Order(product, bid_px, -qty))
                     remaining_sell -= qty
-                    logger.print(f"[{product}] TAKE sell {qty}@{bid_px} fv={fv:.1f}")
                 else:
                     break
 
-            min_spread = cfg.get("min_spread", 2)
+            min_spread  = cfg["min_spread"]
+            inv_pause   = cfg["inventory_pause"]
+            skew_ratio  = pos / POSITION_LIMIT
+            size_skew   = cfg["skew_factor"]
+            price_skew  = cfg["price_skew"]
+
             if spread > min_spread:
                 our_bid = best_bid + 1
                 our_ask = best_ask - 1
 
+                tick_shift = round(price_skew * skew_ratio)
+                our_bid -= tick_shift
+                our_ask -= tick_shift
+
                 base_size = cfg["order_size"]
-                skew = cfg["skew_factor"]
-                skew_ratio = pos / POSITION_LIMIT
-                bid_size = max(1, round(base_size * (1 - skew * skew_ratio)))
-                ask_size = max(1, round(base_size * (1 + skew * skew_ratio)))
+                bid_size  = max(1, round(base_size * (1 - size_skew * skew_ratio)))
+                ask_size  = max(1, round(base_size * (1 + size_skew * skew_ratio)))
 
-                if remaining_buy > 0:
+                post_bid = pos < inv_pause
+                post_ask = pos > -inv_pause
+
+                if post_bid and our_bid < fv and remaining_buy > 0:
                     orders.append(Order(product, our_bid, min(bid_size, remaining_buy)))
-                if remaining_sell > 0:
+                if post_ask and our_ask > fv and remaining_sell > 0:
                     orders.append(Order(product, our_ask, -min(ask_size, remaining_sell)))
-
-                logger.print(f"[{product}] MAKE {our_bid}/{our_ask} sz={bid_size}/{ask_size} pos={pos}")
-            else:
-                logger.print(f"[{product}] spread={spread} <= min_spread, skipping maker")
 
             result[product] = orders
 
-        logger.flush(state, result, 0, "")
-        return result, 0, ""
+        new_trader_data = json.dumps({"ema": ema_state})
+        logger.flush(state, result, 0, new_trader_data)
+        return result, 0, new_trader_data

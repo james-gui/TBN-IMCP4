@@ -78,8 +78,18 @@ POSITION_LIMIT = 80
 EOD_THRESHOLD = 990_000
 
 PARAMS = {
-    "EMERALDS": {"fair_value": 10000, "order_size": 20, "skew_factor": 0.5, "take_edge": 1, "min_spread": 2},
-    "TOMATOES":  {"fair_value": None,  "order_size": 20, "skew_factor": 0.5, "take_edge": 1, "min_spread": 4},
+    "EMERALDS": {
+        "fair_value": 10000,
+        "order_size": 20,
+        "take_edge":  1,
+        "min_spread": 9,
+    },
+    "TOMATOES": {
+        "fair_value": None,
+        "order_size": 20,
+        "take_edge":  1,
+        "min_spread": 9,
+    },
 }
 
 
@@ -99,19 +109,18 @@ class Trader:
 
             best_bid = max(order_depth.buy_orders.keys())
             best_ask = min(order_depth.sell_orders.keys())
+            spread   = best_ask - best_bid
 
             if tick_in_day >= EOD_THRESHOLD:
                 if pos > 0:
                     orders.append(Order(product, best_bid, -pos))
                 elif pos < 0:
                     orders.append(Order(product, best_ask, -pos))
-                logger.print(f"[{product}] EOD flatten pos={pos}")
                 result[product] = orders
                 continue
 
-            spread = best_ask - best_bid
-            cfg = PARAMS.get(product, {"fair_value": None, "order_size": 20, "skew_factor": 0.0, "take_edge": 1, "min_spread": 2})
-            fv = cfg["fair_value"] if cfg["fair_value"] is not None else (best_bid + best_ask) / 2
+            cfg       = PARAMS.get(product, {"fair_value": None, "order_size": 20, "take_edge": 1, "min_spread": 9})
+            fv        = cfg["fair_value"] if cfg["fair_value"] is not None else (best_bid + best_ask) / 2
             take_edge = cfg["take_edge"]
 
             remaining_buy  = POSITION_LIMIT - pos
@@ -124,7 +133,6 @@ class Trader:
                     qty = min(-order_depth.sell_orders[ask_px], remaining_buy)
                     orders.append(Order(product, ask_px, qty))
                     remaining_buy -= qty
-                    logger.print(f"[{product}] TAKE buy {qty}@{ask_px} fv={fv:.1f}")
                 else:
                     break
 
@@ -135,29 +143,18 @@ class Trader:
                     qty = min(order_depth.buy_orders[bid_px], remaining_sell)
                     orders.append(Order(product, bid_px, -qty))
                     remaining_sell -= qty
-                    logger.print(f"[{product}] TAKE sell {qty}@{bid_px} fv={fv:.1f}")
                 else:
                     break
 
-            min_spread = cfg.get("min_spread", 2)
-            if spread > min_spread:
-                our_bid = best_bid + 1
-                our_ask = best_ask - 1
-
+            if spread > cfg["min_spread"]:
+                our_bid   = best_bid + 1
+                our_ask   = best_ask - 1
                 base_size = cfg["order_size"]
-                skew = cfg["skew_factor"]
-                skew_ratio = pos / POSITION_LIMIT
-                bid_size = max(1, round(base_size * (1 - skew * skew_ratio)))
-                ask_size = max(1, round(base_size * (1 + skew * skew_ratio)))
 
                 if remaining_buy > 0:
-                    orders.append(Order(product, our_bid, min(bid_size, remaining_buy)))
+                    orders.append(Order(product, our_bid, min(base_size, remaining_buy)))
                 if remaining_sell > 0:
-                    orders.append(Order(product, our_ask, -min(ask_size, remaining_sell)))
-
-                logger.print(f"[{product}] MAKE {our_bid}/{our_ask} sz={bid_size}/{ask_size} pos={pos}")
-            else:
-                logger.print(f"[{product}] spread={spread} <= min_spread, skipping maker")
+                    orders.append(Order(product, our_ask, -min(base_size, remaining_sell)))
 
             result[product] = orders
 
