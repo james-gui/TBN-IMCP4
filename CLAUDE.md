@@ -15,9 +15,18 @@ Every strategy has two paired files:
 **Rule**: whenever a `_viz.py` file is created or modified, the corresponding `_submit.py` must also be created/updated to match — same logic, same Logger class included (IMC requires it), same `logger.flush()` call.
 
 Current strategy pairs:
-- `message_viz.py` / `message_submit.py` — market making (EMERALDS) + mean reversion (TOMATOES)
-- `attempt2_viz.py` / `attempt2_submit.py` — momentum market making with EMA skew (both products)
-- `jamestutorialr_viz.py` / `jamestutorialr_submit.py` — same as message, James's tutorial version
+- `asymmm` — asymmetric MM with inventory skew and EMA fair value
+- `attempt2` — momentum MM using fast/slow EMA crossover to skew quotes
+- `basicmm` — basic MM undercutting best bid/ask by one tick
+- `flatmm` — symmetric MM with basic inventory skew
+- `impmm` — improved MM with tighter taker thresholds and per-product limits
+- `jamestutorialr` — tutorial version, MM on EMERALDS + mean reversion on TOMATOES
+- `message` — momentum MM with adaptive EMA-based trend skew
+- `mmfinetuned` — fine-tuned MM with cubic inventory skew and wider quotes
+- `mmspreadgate` — fine-tuned MM variant with optimized parameters
+- `momomm` — momentum-enhanced MM extending mmfinetuned with EMA signals
+- `spreadmm` — spread-filtered MM that only quotes above min profit threshold
+- `targetmm` — target-inventory MM using mean reversion to set position targets
 
 ## File Structure
 - `viz/` — strategy files with Logger (for backtesting/visualizer). Also contains a copy of `datamodel.py` so prosperity4btx can find it when running files from this folder.
@@ -26,7 +35,7 @@ Current strategy pairs:
 - `run_backtest.py` — runs backtest + opens local visualizer automatically
 - `setup_visualizer.py` — one-time build script for the local visualizer
 - `visualizer/` — git submodule: jmerle/imc-prosperity-3-visualizer
-- `backtests/` — auto-generated logs when running without `--out`
+- `backtests/` — auto-generated logs when running without `--out` (gitignored)
 
 ## Setup (first time after cloning)
 ```bash
